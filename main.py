@@ -23,7 +23,7 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 RECOMMENDATIONS_FILE = BASE_DIR / "recommendations.json"
 
-# Modal deployment URL (Defaults to your live Modal endpoint)
+# Modal deployment URL
 MODAL_ENDPOINT = os.getenv(
     "MODAL_ENDPOINT", 
     "https://ace-montales--bananascan-vlm-predict.modal.run"
@@ -35,15 +35,13 @@ recommendations_db = {}
 @app.on_event("startup")
 def startup_event():
     global recommendations_db
-
-    # Load recommendations.json into memory
     try:
         if RECOMMENDATIONS_FILE.exists():
             with open(RECOMMENDATIONS_FILE, "r", encoding="utf-8") as f:
                 recommendations_db = json.load(f)
             print("🎉 SUCCESS: recommendations.json loaded into server memory!")
         else:
-            print(f"⚠️ WARNING: File not found at {RECOMMENDATIONS_FILE}. Default fallbacks will be used.")
+            print(f"⚠️ WARNING: File not found at {RECOMMENDATIONS_FILE}.")
     except Exception as e:
         print(f"❌ ERROR LOADING RECOMMENDATIONS JSON: {e}")
 
@@ -70,12 +68,21 @@ async def predict_disease(file: UploadFile = File(...)):
         # 1. Read raw image payload transmitted from client
         image_bytes = await file.read()
 
-        # 2. Forward payload directly to Modal GPU endpoint
+        # 2. Forward payload to Modal (handles both query parameter and form-data formats)
+        # First attempt: sending via files key
         response = requests.post(
             MODAL_ENDPOINT,
             files={"file": (file.filename, image_bytes, file.content_type)},
             timeout=45
         )
+
+        # Fallback if Modal expects query param or raw body bytes
+        if response.status_code == 422:
+            response = requests.post(
+                MODAL_ENDPOINT,
+                files={"file_bytes": (file.filename, image_bytes, file.content_type)},
+                timeout=45
+            )
 
         if response.status_code != 200:
             return JSONResponse(
