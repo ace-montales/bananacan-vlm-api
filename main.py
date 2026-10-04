@@ -95,15 +95,24 @@ async def predict_disease(file: UploadFile = File(...)):
         calculated_confidence = data.get("confidence", "91.50%")
 
         # 3. SERVER-SIDE RULE-BASED DSS SELECTION
-        caption_upper = predicted_caption.upper()
-        matched_class = None
-        for key in ["BSL", "YSL", "BBTV", "FL", "HLT"]:
-            if key in caption_upper:
-                matched_class = key
-                break
+        DISEASE_MAPPING = {
+    "BSL": ["BSL", "BLACK SIGATOKA", "SIGATOKA"],
+    "YSL": ["YSL", "YELLOW SIGATOKA"],
+    "BBTV": ["BBTV", "BUNCHY TOP", "BANANA BUNCHY TOP"],
+    "FL": ["FL", "FUSARIUM", "PANAMA DISEASE"],
+    "HLT": ["HLT", "HEALTHY"]
+}
 
-        if not matched_class:
-            matched_class = "OOD"
+caption_upper = predicted_caption.upper()
+matched_class = None
+
+for key, phrases in DISEASE_MAPPING.items():
+    if any(phrase in caption_upper for phrase in phrases):
+        matched_class = key
+        break
+
+if not matched_class:
+    matched_class = "OOD"
 
         # Retrieve class pool from recommendations.json
         class_treatments = recommendations_db.get(matched_class, []) if matched_class else []
