@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import random
@@ -6,9 +7,11 @@ from pathlib import Path
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import requests
+from PIL import Image
+import torch
+from transformers import BlipForConditionalGeneration, BlipProcessor
 
-app = FastAPI(title="BananaScan VLM Inference & DSS API")
+app = FastAPI(title="BananaScan VLM Direct Render API")
 
 # Enable CORS for cross-platform clients
 app.add_middleware(
@@ -23,21 +26,19 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 RECOMMENDATIONS_FILE = BASE_DIR / "recommendations.json"
 
-# Hugging Face Repository & Token configuration
-HF_REPO_ID = os.getenv("HF_REPO_ID", "Ace-VI/banana-blip-model")
-HF_TOKEN = os.getenv("HF_TOKEN", "")
-
-# Updated Hugging Face Serverless Router Endpoint
-API_URL = f"https://router.huggingface.co/hf-inference/models/{HF_REPO_ID}"
+# Hugging Face Repository configuration
+HF_REPO_ID = os.getenv("HF_REPO_ID", "Ace-VI/banana-blip-model").strip()
 
 recommendations_db = {}
+processor = None
+model = None
 
 
 @app.on_event("startup")
-def load_recommendations():
-    global recommendations_db
+def startup_event():
+    global recommendations_db, processor, model
 
-    # Load recommendations.json into memory
+    # 1. Load recommendations.json into memory
     try:
         if RECOMMENDATIONS_FILE.exists():
             with open(RECOMMENDATIONS_FILE, "r", encoding="utf-8") as f:
@@ -48,55 +49,50 @@ def load_recommendations():
     except Exception as e:
         print(f"❌ ERROR LOADING RECOMMENDATIONS JSON: {e}")
 
+    # 2. Download and load custom model weights directly into memory
+    try:
+        print(f"⏳ Loading custom VLM model '{HF_REPO_ID}' into memory...")
+        processor = BlipProcessor.from_pretrained(HF_REPO_ID)
+        model = BlipForConditionalGeneration.from_pretrained(HF_REPO_ID)
+        model.eval()
+        print("🎉 SUCCESS: VLM model loaded successfully on startup!")
+    except Exception as e:
+        print(f"❌ ERROR LOADING MODEL ON STARTUP: {e}")
+
 
 @app.get("/")
 def read_root():
     return {
         "status": "online",
-        "mode": "hf_inference_api",
+        "mode": "render_local_vlm",
+        "model_loaded": model is not None,
         "recommendations_loaded": bool(recommendations_db),
         "hf_repo": HF_REPO_ID,
-        "has_token": bool(HF_TOKEN)
     }
 
 
 @app.post("/predict")
 async def predict_disease(file: UploadFile = File(...)):
     try:
-        # 1. Verify Hugging Face Token presence
-        if not HF_TOKEN:
+        if model is None or processor is None:
             return JSONResponse(
                 status_code=200,
-                content={"success": False, "error": "HF_TOKEN environment variable is not set on Render."}
+                content={"success": False, "error": "Model failed to initialize on startup."}
             )
 
-        # 2. Read raw image stream transmitted via Flutter app
+        # 1. Read raw image stream transmitted via Flutter app
         image_bytes = await file.read()
+        raw_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        # 3. Query Hugging Face Serverless Inference API
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        hf_response = requests.post(API_URL, headers=headers, data=image_bytes, timeout=30)
+        # 2. Run local model inference using PyTorch & Transformers
+        inputs = processor(raw_image, return_tensors="pt")
+        with torch.no_grad():
+            out = model.generate(**inputs, max_new_tokens=50)
+            predicted_caption = processor.decode(out[0], skip_special_tokens=True).strip()
 
-        if hf_response.status_code != 200:
-            return JSONResponse(
-                status_code=200,
-                content={"success": False, "error": f"Hugging Face API ({hf_response.status_code}): {hf_response.text}"}
-            )
-
-        hf_data = hf_response.json()
-
-        # Extract generated caption from Hugging Face response structure
-        if isinstance(hf_data, list) and len(hf_data) > 0 and "generated_text" in hf_data[0]:
-            predicted_caption = hf_data[0]["generated_text"].strip()
-        elif isinstance(hf_data, dict) and "generated_text" in hf_data:
-            predicted_caption = hf_data["generated_text"].strip()
-        else:
-            predicted_caption = str(hf_data)
-
-        # HF Serverless text captioning returns clean captions without raw token logits
         calculated_confidence = 91.50
 
-        # 4. SERVER-SIDE RULE-BASED DSS SELECTION
+        # 3. SERVER-SIDE RULE-BASED DSS SELECTION
         caption_upper = predicted_caption.upper()
         matched_class = None
         for key in ["BSL", "YSL", "BBTV", "FL", "HLT"]:
@@ -104,20 +100,18 @@ async def predict_disease(file: UploadFile = File(...)):
                 matched_class = key
                 break
 
-        # Fallback to OOD pool if caption doesn't contain a known disease tag
         if not matched_class:
             matched_class = "OOD"
 
         # Retrieve class pool from recommendations.json
         class_treatments = recommendations_db.get(matched_class, []) if matched_class else []
 
-        # Sample dynamic treatment option bounded by rule isolation
         if class_treatments:
             selected_treatment = random.choice(class_treatments)
         else:
             selected_treatment = "Consult a local agricultural extension officer for guidance."
 
-        # 5. RETURN UNIFIED RESPONSE MATCHING FLUTTER UI EXPECTATIONS
+        # 4. RETURN UNIFIED RESPONSE MATCHING FLUTTER UI EXPECTATIONS
         return JSONResponse(status_code=200, content={
             "success": True,
             "disease": predicted_caption,
@@ -127,5 +121,4 @@ async def predict_disease(file: UploadFile = File(...)):
         })
 
     except Exception as e:
-        # Return status_code=200 with success: false so Flutter can parse and display the exact exception string
         return JSONResponse(status_code=200, content={"success": False, "error": f"Server exception: {str(e)}"})
