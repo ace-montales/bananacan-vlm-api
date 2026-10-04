@@ -23,8 +23,11 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 RECOMMENDATIONS_FILE = BASE_DIR / "recommendations.json"
 
-# Modal deployment URL (Can be set via Render Environment Variables)
-MODAL_ENDPOINT = os.getenv("MODAL_ENDPOINT", "YOUR_MODAL_URL_HERE")
+# Modal deployment URL (Defaults to your live Modal endpoint)
+MODAL_ENDPOINT = os.getenv(
+    "MODAL_ENDPOINT", 
+    "https://ace-montales--bananascan-vlm-predict.modal.run"
+)
 
 recommendations_db = {}
 
@@ -51,14 +54,14 @@ def read_root():
         "status": "online",
         "mode": "render_modal_proxy",
         "recommendations_loaded": bool(recommendations_db),
-        "modal_endpoint_configured": MODAL_ENDPOINT != "https://ace-montales--bananascan-vlm-predict.modal.run",
+        "modal_endpoint_configured": bool(MODAL_ENDPOINT and MODAL_ENDPOINT != "YOUR_MODAL_URL_HERE"),
     }
 
 
 @app.post("/predict")
 async def predict_disease(file: UploadFile = File(...)):
     try:
-        if MODAL_ENDPOINT == "https://ace-montales--bananascan-vlm-predict.modal.run":
+        if not MODAL_ENDPOINT or MODAL_ENDPOINT == "YOUR_MODAL_URL_HERE":
             return JSONResponse(
                 status_code=200,
                 content={"success": False, "error": "Modal endpoint URL is not configured on Render server."}
