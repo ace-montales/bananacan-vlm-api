@@ -26,7 +26,9 @@ RECOMMENDATIONS_FILE = BASE_DIR / "recommendations.json"
 # Hugging Face Repository & Token configuration
 HF_REPO_ID = os.getenv("HF_REPO_ID", "Ace-VI/banana-blip-model")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
-API_URL = f"https://api-inference.huggingface.co/models/{HF_REPO_ID}"
+
+# Updated Hugging Face Serverless Router Endpoint
+API_URL = f"https://router.huggingface.co/hf-inference/models/{HF_REPO_ID}"
 
 recommendations_db = {}
 
@@ -53,24 +55,32 @@ def read_root():
         "status": "online",
         "mode": "hf_inference_api",
         "recommendations_loaded": bool(recommendations_db),
-        "hf_repo": HF_REPO_ID
+        "hf_repo": HF_REPO_ID,
+        "has_token": bool(HF_TOKEN)
     }
 
 
 @app.post("/predict")
 async def predict_disease(file: UploadFile = File(...)):
     try:
-        # 1. Read raw image stream transmitted via Flutter app
+        # 1. Verify Hugging Face Token presence
+        if not HF_TOKEN:
+            return JSONResponse(
+                status_code=200,
+                content={"success": False, "error": "HF_TOKEN environment variable is not set on Render."}
+            )
+
+        # 2. Read raw image stream transmitted via Flutter app
         image_bytes = await file.read()
 
-        # 2. Query Hugging Face Serverless Inference API
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
-        hf_response = requests.post(API_URL, headers=headers, data=image_bytes)
+        # 3. Query Hugging Face Serverless Inference API
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        hf_response = requests.post(API_URL, headers=headers, data=image_bytes, timeout=30)
 
         if hf_response.status_code != 200:
             return JSONResponse(
-                status_code=hf_response.status_code,
-                content={"success": False, "error": f"Hugging Face API Error: {hf_response.text}"}
+                status_code=200,
+                content={"success": False, "error": f"Hugging Face API ({hf_response.status_code}): {hf_response.text}"}
             )
 
         hf_data = hf_response.json()
@@ -86,7 +96,7 @@ async def predict_disease(file: UploadFile = File(...)):
         # HF Serverless text captioning returns clean captions without raw token logits
         calculated_confidence = 91.50
 
-        # 3. SERVER-SIDE RULE-BASED DSS SELECTION
+        # 4. SERVER-SIDE RULE-BASED DSS SELECTION
         caption_upper = predicted_caption.upper()
         matched_class = None
         for key in ["BSL", "YSL", "BBTV", "FL", "HLT"]:
@@ -107,7 +117,7 @@ async def predict_disease(file: UploadFile = File(...)):
         else:
             selected_treatment = "Consult a local agricultural extension officer for guidance."
 
-        # 4. RETURN UNIFIED RESPONSE MATCHING FLUTTER UI EXPECTATIONS
+        # 5. RETURN UNIFIED RESPONSE MATCHING FLUTTER UI EXPECTATIONS
         return JSONResponse(status_code=200, content={
             "success": True,
             "disease": predicted_caption,
@@ -117,4 +127,5 @@ async def predict_disease(file: UploadFile = File(...)):
         })
 
     except Exception as e:
-        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+        # Return status_code=200 with success: false so Flutter can parse and display the exact exception string
+        return JSONResponse(status_code=200, content={"success": False, "error": f"Server exception: {str(e)}"})
