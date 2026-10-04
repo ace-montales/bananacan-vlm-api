@@ -1,4 +1,3 @@
-import io
 import json
 import os
 import random
@@ -7,11 +6,9 @@ from pathlib import Path
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from PIL import Image
-import torch
-from transformers import BlipForConditionalGeneration, BlipProcessor
+import requests
 
-app = FastAPI(title="BananaScan VLM Direct Render API")
+app = FastAPI(title="BananaScan DSS Proxy API")
 
 # Enable CORS for cross-platform clients
 app.add_middleware(
@@ -26,19 +23,17 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 RECOMMENDATIONS_FILE = BASE_DIR / "recommendations.json"
 
-# Hugging Face Repository configuration
-HF_REPO_ID = os.getenv("HF_REPO_ID", "Ace-VI/banana-blip-model").strip()
+# Modal deployment URL (Can be set via Render Environment Variables)
+MODAL_ENDPOINT = os.getenv("MODAL_ENDPOINT", "YOUR_MODAL_URL_HERE")
 
 recommendations_db = {}
-processor = None
-model = None
 
 
 @app.on_event("startup")
 def startup_event():
-    global recommendations_db, processor, model
+    global recommendations_db
 
-    # 1. Load recommendations.json into memory
+    # Load recommendations.json into memory
     try:
         if RECOMMENDATIONS_FILE.exists():
             with open(RECOMMENDATIONS_FILE, "r", encoding="utf-8") as f:
@@ -49,48 +44,45 @@ def startup_event():
     except Exception as e:
         print(f"❌ ERROR LOADING RECOMMENDATIONS JSON: {e}")
 
-    # 2. Download and load custom model weights directly into memory
-    try:
-        print(f"⏳ Loading custom VLM model '{HF_REPO_ID}' into memory...")
-        processor = BlipProcessor.from_pretrained(HF_REPO_ID)
-        model = BlipForConditionalGeneration.from_pretrained(HF_REPO_ID)
-        model.eval()
-        print("🎉 SUCCESS: VLM model loaded successfully on startup!")
-    except Exception as e:
-        print(f"❌ ERROR LOADING MODEL ON STARTUP: {e}")
-
 
 @app.get("/")
 def read_root():
     return {
         "status": "online",
-        "mode": "render_local_vlm",
-        "model_loaded": model is not None,
+        "mode": "render_modal_proxy",
         "recommendations_loaded": bool(recommendations_db),
-        "hf_repo": HF_REPO_ID,
+        "modal_endpoint_configured": MODAL_ENDPOINT != "https://ace-montales--bananascan-vlm-predict.modal.run",
     }
 
 
 @app.post("/predict")
 async def predict_disease(file: UploadFile = File(...)):
     try:
-        if model is None or processor is None:
+        if MODAL_ENDPOINT == "https://ace-montales--bananascan-vlm-predict.modal.run":
             return JSONResponse(
                 status_code=200,
-                content={"success": False, "error": "Model failed to initialize on startup."}
+                content={"success": False, "error": "Modal endpoint URL is not configured on Render server."}
             )
 
-        # 1. Read raw image stream transmitted via Flutter app
+        # 1. Read raw image payload transmitted from client
         image_bytes = await file.read()
-        raw_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        # 2. Run local model inference using PyTorch & Transformers
-        inputs = processor(raw_image, return_tensors="pt")
-        with torch.no_grad():
-            out = model.generate(**inputs, max_new_tokens=50)
-            predicted_caption = processor.decode(out[0], skip_special_tokens=True).strip()
+        # 2. Forward payload directly to Modal GPU endpoint
+        response = requests.post(
+            MODAL_ENDPOINT,
+            files={"file": (file.filename, image_bytes, file.content_type)},
+            timeout=45
+        )
 
-        calculated_confidence = 91.50
+        if response.status_code != 200:
+            return JSONResponse(
+                status_code=200,
+                content={"success": False, "error": f"Modal Error ({response.status_code}): {response.text}"}
+            )
+
+        data = response.json()
+        predicted_caption = data.get("disease", "OOD")
+        calculated_confidence = data.get("confidence", "91.50%")
 
         # 3. SERVER-SIDE RULE-BASED DSS SELECTION
         caption_upper = predicted_caption.upper()
@@ -115,7 +107,7 @@ async def predict_disease(file: UploadFile = File(...)):
         return JSONResponse(status_code=200, content={
             "success": True,
             "disease": predicted_caption,
-            "confidence": f"{round(calculated_confidence, 2)}%",
+            "confidence": calculated_confidence,
             "description": f"Visual analysis indicates symptoms matching {predicted_caption}.",
             "recommendations": [selected_treatment]
         })
