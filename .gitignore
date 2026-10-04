@@ -1,0 +1,14 @@
+.venv/
+venv/
+env/
+__pycache__/
+weights/
+model_weights/
+*.safetensors
+*.pth
+*.pt
+*.bin
+*.onnx
+.env
+.DS_Store
+Thumbs.db

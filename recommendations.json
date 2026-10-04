@@ -1,0 +1,72 @@
+{
+  "BBTV": [
+    "Perform continuous monitoring of banana plants for early symptoms of Bunchy Top Virus.",
+    "Eradicate and rogue infected plants as soon as symptoms appear to prevent field spread.",
+    "Control alternative host plants and aphid vectors in the surrounding plantation area.",
+    "Utilize disease-free planting materials for all new field plots.",
+    "Plant less susceptible varieties and destroy infected mats completely to halt transmission.",
+    "Identify and eradicate diseased banana plants immediately.",
+    "Regularly survey the farm for disease presence and implement eradication and treatment area interventions.",
+    "Spot symptoms early and pull out infected plants.",
+    "Identify diseased banana plants early and eradicate them immediately, since infected plants become a source of virus for the rest of the plantation",
+    "Regularly survey and visually inspect your farm for disease symptoms, and carry out eradication and treatment area interventions",
+    "Eradicate infected plants",
+     "Use healthy planting materials, an eradication program for sources of virus, and management of insect vectors (aphids) on diseased plants as your basic BBTV management strategy"
+  ],
+  "YSL": [
+    "Execute regular stem sanitation and field debris clearing.",
+    "Apply recommended systemic or contact fungicides according to local agricultural schedules.",
+    "Control weeds periodically and prevent overlapping of leaves to reduce humidity and fungal spore settlement.",
+    "Prune and safely discard leaves displaying mature necrotic spots.",
+    "Maintain regular fungicide application schedules during high-risk humid seasons.",
+    "Perform regular stem sanitation and clear fallen leaf debris around plant bases.",
+    "Prune or remove necrotic leaf tissue, including controlled defoliation or early pruning.",
+    "Remove infected leaves to reduce inoculum levels in the plantation.",
+    "Remove diseased leaves from infected plants to reduce inoculums.",
+    "Sanitation-drain excess water logging which produces high humidity.",
+    "Spray mancozeb, a protectant fungicide, as an oil-in-water emulsion",
+    "Spray chlorothalonil, a protectant fungicide",
+    "Apply a 10% urea solution to leaf tissue to reduce inoculum and speed up leaf decomposition"
+  ],
+  "BSL": [
+    "Perform regular stem sanitation and clear fallen leaf debris around plant bases.",
+    "Reduce humidity within the plantation by providing adequate soil drainage channels.",
+    "Apply recommended fungicides such as propiconazole (Tilt) or trifloxystrobin.",
+    "Re-establish or transfer planting to a new site using certified tissue-cultured plantlets.",
+    "Maintain regular fungicide application schedules during high-risk humid seasons.",
+    "Increase plant spacing during planting to improve canopy air circulation.",
+    "Prune and safely discard leaves displaying mature necrotic spots.",
+    "Control weeds periodically and prevent overlapping of leaves to reduce humidity and fungal spore settlement.",
+    "Prune or remove necrotic leaf tissue, including controlled defoliation or early pruning",
+    "Remove infected leaves to reduce inoculum levels in the plantation.",
+    "Remove diseased leaves from infected plants to reduce inoculums.",
+    "Sanitation-drain excess water logging which produces high humidity.",
+    "Spray mancozeb, a protectant fungicide, as an oil-in-water emulsion",
+    "Spray chlorothalonil, a protectant fungicide",
+    "Apply a 10% urea solution to leaf tissue to reduce inoculum and speed up leaf decomposition"
+  ],
+  "FL": [
+    "Bag developing fruit bunches with perforated polyethylene covers.",
+    "Remove and safely dispose of dead or heavily infected leaves exhibiting freckle spots.",
+    "Apply protective fungicides such as Benlate (Benomyl) according to recommended schedules.",
+    "Utilize plastic bag covers over bunches to shield fruit from fungal spore settlement.",
+    "Remove infected leaves to prevent spread of the disease.",
+    "Provide drainage canals to avoid water logging which triggers high humidity favorable for disease development.",
+    "Remove infected leaves to prevent spread of the disease.",
+    "Maintain proper plant nutrition.",
+    "Use the fungicides used against black Sigatoka, which would most likely provide control.",
+    "Bag bunches as soon as possible after the male bud has been removed, to help prevent fruit infection.",
+    "Cut out diseased patches on leaves.",
+    "Spray a protectant fungicide from the dithiocarbamate group, such as mancozeb",
+    "Spray banana misting oil as a protectant",
+    "Use a systemic fungicide from the triazole group, such as propiconazole or flusilazole",
+    "Use a systemic fungicide from the strobilurin group, such as azoxystrobin"
+  ],
+  "HLT": [
+    "No pathological symptoms detected. Maintain regular sanitation, weeding, and balanced irrigation schedules."
+  ],
+  "OOD": [
+    "Image could not be identified as a banana leaf. Please re-align camera and capture under bright, direct light."
+  ]
+  
+}
