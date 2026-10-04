@@ -2,6 +2,5 @@ fastapi
 uvicorn
 pillow
 python-multipart
---find-links https://download.pytorch.org/whl/torch_stable.html
-torch==2.2.2+cpu
 transformers
+torch
