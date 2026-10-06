@@ -4,7 +4,7 @@ import random
 import re
 from pathlib import Path
 
-import requests
+import httpx
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -12,8 +12,7 @@ from fastapi.responses import JSONResponse
 
 app = FastAPI(title="BananaScan DSS Proxy API")
 
-# Wildcard origins are compatible with allow_credentials=False.
-# Set CORS_ORIGINS to comma-separated origins if you need to restrict access.
+# Set CORS_ORIGINS to comma-separated origins to restrict access.
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "*").split(",")
@@ -34,14 +33,12 @@ RECOMMENDATIONS_FILE = BASE_DIR / "recommendations.json"
 
 MODAL_ENDPOINT = os.getenv(
     "MODAL_ENDPOINT",
-    "https://ace-montales--bananascan-vlm-bananascanmodel-predict.modal.run", 
+    "https://ace-montales--bananascan-vlm-bananascanmodel-predict.modal.run",
 )
 
 recommendations_db = {}
 
 
-# Match specific disease names first. Avoid matching generic "SIGATOKA",
-# because that could incorrectly classify Yellow Sigatoka as Black Sigatoka.
 DISEASE_RULES = [
     ("BBTV", ("BBTV", "BANANA BUNCHY TOP", "BUNCHY TOP VIRUS", "BUNCHY TOP")),
     ("BSL", ("BSL", "BLACK SIGATOKA")),
@@ -65,13 +62,14 @@ def _normalize_text(value: str) -> str:
     return " ".join(re.findall(r"[A-Z0-9]+", value.upper()))
 
 
-def _match_disease(prediction: str) -> str:
-    normalized_prediction = f" {_normalize_text(prediction)} "
+def _match_disease(*values: str) -> str:
+    """Return a disease code from the model label or generated caption."""
+    normalized_text = f" {' '.join(_normalize_text(value) for value in values)} "
 
     for disease_code, phrases in DISEASE_RULES:
         for phrase in phrases:
             normalized_phrase = f" {_normalize_text(phrase)} "
-            if normalized_phrase in normalized_prediction:
+            if normalized_phrase in normalized_text:
                 return disease_code
 
     return "OOD"
@@ -106,39 +104,39 @@ def read_root():
 
 @app.post("/predict")
 async def predict_disease(file: UploadFile = File(...)):
-    try:
-        if not MODAL_ENDPOINT:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "success": False,
-                    "error": "Modal endpoint URL is not configured on the server.",
-                },
-            )
-
-        image_bytes = await file.read()
-        if not image_bytes:
-            return JSONResponse(
-                status_code=200,
-                content={"success": False, "error": "The uploaded image is empty."},
-            )
-
-        content_type = file.content_type or "application/octet-stream"
-        filename = file.filename or "upload"
-
-        response = requests.post(
-            MODAL_ENDPOINT,
-            files={"file": (filename, image_bytes, content_type)},
-            timeout=45,
+    if not MODAL_ENDPOINT:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": False,
+                "error": "Modal endpoint URL is not configured on the server.",
+            },
         )
 
-        # Retry with the alternate field name if the Modal endpoint rejects "file".
-        if response.status_code == 422:
-            response = requests.post(
+    image_bytes = await file.read()
+    if not image_bytes:
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "error": "The uploaded image is empty."},
+        )
+
+    filename = file.filename or "upload"
+    content_type = file.content_type or "application/octet-stream"
+    timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
                 MODAL_ENDPOINT,
-                files={"file_bytes": (filename, image_bytes, content_type)},
-                timeout=45,
+                files={"file": (filename, image_bytes, content_type)},
             )
+
+            # Retry with the alternate field name if Modal rejects "file".
+            if response.status_code == 422:
+                response = await client.post(
+                    MODAL_ENDPOINT,
+                    files={"file_bytes": (filename, image_bytes, content_type)},
+                )
 
         if response.status_code != 200:
             return JSONResponse(
@@ -163,56 +161,80 @@ async def predict_disease(file: UploadFile = File(...)):
                 },
             )
 
-        prediction = str(
-            data.get("disease")
+        if not isinstance(data, dict):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": False,
+                    "error": "Modal returned an unexpected response format.",
+                },
+            )
+
+        raw_output = str(
+            data.get("raw_output")
             or data.get("prediction")
             or data.get("caption")
-            or "OOD"
+            or data.get("disease")
+            or ""
         ).strip()
 
-        disease_code = _match_disease(prediction)
-        disease_label = DISEASE_LABELS[disease_code]
+        model_disease = str(data.get("disease") or "").strip()
+        disease_code = _match_disease(model_disease, raw_output)
+        disease_label = (
+            model_disease
+            if model_disease and model_disease.upper() != disease_code
+            else DISEASE_LABELS[disease_code]
+        )
 
-        confidence = data.get("confidence")
-        if confidence is None or str(confidence).strip() == "":
-            confidence = "91.50%"
-        else:
-            confidence = str(confidence)
+        # Severity comes from the model response; it is not inferred from confidence.
+        severity = str(data.get("severity") or "Unknown").strip()
 
-        description = str(data.get("description") or "").strip()
+        description = str(data.get("description") or raw_output).strip()
         if not description:
-            # Keep a detailed model caption in the report body when available.
             description = (
-                prediction
-                if disease_code != "OOD"
-                else "The image could not be confidently matched to a supported banana leaf condition."
+                "The image could not be matched to a supported banana leaf condition."
+                if disease_code == "OOD"
+                else f"Visual analysis detected {disease_label}."
             )
 
         treatments = recommendations_db.get(disease_code, [])
         if isinstance(treatments, str):
             treatments = [treatments]
+        elif not isinstance(treatments, list):
+            treatments = []
 
-        if treatments:
-            recommendation = random.choice(treatments)
-        else:
-            recommendation = (
-                "Consult a local agricultural extension officer for guidance."
-            )
+        recommendation = (
+            random.choice(treatments)
+            if treatments
+            else "Consult a local agricultural extension officer for guidance."
+        )
 
+        result = {
+            "success": True,
+            "disease": disease_label,
+            "disease_code": disease_code,
+            "severity": severity,
+            "raw_output": raw_output,
+            "prediction": raw_output,  # Backward compatibility with existing Flutter code.
+            "description": description,
+            "recommendations": [recommendation],
+        }
+
+        # Preserve confidence if another model version provides it.
+        if data.get("confidence") is not None:
+            result["confidence"] = str(data["confidence"])
+
+        return JSONResponse(status_code=200, content=result)
+
+    except httpx.TimeoutException:
         return JSONResponse(
             status_code=200,
             content={
-                "success": True,
-                "disease": disease_label,
-                "disease_code": disease_code,
-                "prediction": prediction,
-                "confidence": confidence,
-                "description": description,
-                "recommendations": [recommendation],
+                "success": False,
+                "error": "Request to the Modal prediction service timed out.",
             },
         )
-
-    except requests.RequestException as error:
+    except httpx.RequestError as error:
         return JSONResponse(
             status_code=200,
             content={
