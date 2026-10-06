@@ -34,7 +34,7 @@ RECOMMENDATIONS_FILE = BASE_DIR / "recommendations.json"
 
 MODAL_ENDPOINT = os.getenv(
     "MODAL_ENDPOINT",
-    "https://ace-montales--bananascan-vlm-predict.modal.run",
+    "https://ace-montales--bananascan-vlm-bananascanmodel-predict.modal.run", 
 )
 
 recommendations_db = {}
