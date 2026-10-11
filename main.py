@@ -258,7 +258,7 @@ async def predict_disease(file: UploadFile = File(...)):
 @app.post("/vqa")
 async def predict_vqa(
     file: UploadFile = File(...),
-    question: str = Form("What is the ripeness stage of this banana?")
+    question: str = Form("What disease does this leaf have?")
 ):
     """Proxy endpoint for the 5-class Banana VQA Modal service."""
     if not BANANA_VQA_MODAL_ENDPOINT:
