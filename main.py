@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -31,9 +31,16 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 RECOMMENDATIONS_FILE = BASE_DIR / "recommendations.json"
 
+# Leaf Disease Modal Endpoint
 MODAL_ENDPOINT = os.getenv(
     "MODAL_ENDPOINT",
     "https://ace-montales--bananascan-vlm-bananascanmodel-predict.modal.run",
+)
+
+# New Banana VQA Modal Endpoint
+BANANA_VQA_MODAL_ENDPOINT = os.getenv(
+    "BANANA_VQA_MODAL_ENDPOINT",
+    "https://ace-montales--bananascan-vlm-bananavqamodel-predict.modal.run",
 )
 
 recommendations_db = {}
@@ -98,7 +105,8 @@ def read_root():
         "status": "online",
         "mode": "render_modal_proxy",
         "recommendations_loaded": bool(recommendations_db),
-        "modal_endpoint_configured": bool(MODAL_ENDPOINT),
+        "disease_modal_endpoint_configured": bool(MODAL_ENDPOINT),
+        "vqa_modal_endpoint_configured": bool(BANANA_VQA_MODAL_ENDPOINT),
     }
 
 
@@ -186,7 +194,6 @@ async def predict_disease(file: UploadFile = File(...)):
             else DISEASE_LABELS[disease_code]
         )
 
-        # Severity comes from the model response; it is not inferred from confidence.
         severity = str(data.get("severity") or "Unknown").strip()
 
         description = str(data.get("description") or raw_output).strip()
@@ -215,12 +222,11 @@ async def predict_disease(file: UploadFile = File(...)):
             "disease_code": disease_code,
             "severity": severity,
             "raw_output": raw_output,
-            "prediction": raw_output,  # Backward compatibility with existing Flutter code.
+            "prediction": raw_output,
             "description": description,
             "recommendations": [recommendation],
         }
 
-        # Preserve confidence if another model version provides it.
         if data.get("confidence") is not None:
             result["confidence"] = str(data["confidence"])
 
@@ -241,6 +247,87 @@ async def predict_disease(file: UploadFile = File(...)):
                 "success": False,
                 "error": f"Could not reach the Modal prediction service: {error}",
             },
+        )
+    except Exception as error:
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "error": f"Server exception: {error}"},
+        )
+
+
+@app.post("/vqa")
+async def predict_vqa(
+    file: UploadFile = File(...),
+    question: str = Form("What is the ripeness stage of this banana?")
+):
+    """Proxy endpoint for the 5-class Banana VQA Modal service."""
+    if not BANANA_VQA_MODAL_ENDPOINT:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": False,
+                "error": "Banana VQA Modal endpoint URL is not configured on the server.",
+            },
+        )
+
+    image_bytes = await file.read()
+    if not image_bytes:
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "error": "The uploaded image is empty."},
+        )
+
+    filename = file.filename or "upload"
+    content_type = file.content_type or "application/octet-stream"
+    timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # Send file along with the question form field to Modal
+            response = await client.post(
+                BANANA_VQA_MODAL_ENDPOINT,
+                files={"file": (filename, image_bytes, content_type)},
+                data={"question": question},
+            )
+
+            if response.status_code == 422:
+                response = await client.post(
+                    BANANA_VQA_MODAL_ENDPOINT,
+                    files={"file_bytes": (filename, image_bytes, content_type)},
+                    data={"question": question},
+                )
+
+        if response.status_code != 200:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": False,
+                    "error": f"Modal VQA Error ({response.status_code}): {response.text[:1000]}",
+                },
+            )
+
+        data = response.json()
+        answer = data.get("answer") or data.get("prediction") or data.get("raw_output") or ""
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "question": question,
+                "answer": answer,
+                "prediction": answer,
+            },
+        )
+
+    except httpx.TimeoutException:
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "error": "Request to Modal VQA service timed out."},
+        )
+    except httpx.RequestError as error:
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "error": f"Could not reach Modal VQA service: {error}"},
         )
     except Exception as error:
         return JSONResponse(
